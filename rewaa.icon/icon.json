@@ -1,0 +1,60 @@
+{
+  "fill" : {
+    "automatic-gradient" : "display-p3:0.98438,0.97852,0.96045,1.00000"
+  },
+  "groups" : [
+    {
+      "layers" : [
+        {
+          "blend-mode" : "normal",
+          "glass" : true,
+          "image-name" : "mdi_flower-tulip-1 2.svg",
+          "name" : "mdi_flower-tulip-1 2",
+          "opacity" : 0.9,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              220.40682461707797,
+              123.20085610697743
+            ]
+          }
+        },
+        {
+          "blend-mode" : "normal",
+          "glass" : true,
+          "image-name" : "mynaui_flower-solid 2.svg",
+          "name" : "mynaui_flower-solid 2",
+          "opacity" : 0.9
+        },
+        {
+          "blend-mode" : "normal",
+          "glass" : true,
+          "image-name" : "mdi_flower-tulip 2.svg",
+          "name" : "mdi_flower-tulip 2",
+          "opacity" : 0.9,
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              -211.30954583109815,
+              123.20085610697743
+            ]
+          }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}
