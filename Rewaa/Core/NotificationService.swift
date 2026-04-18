@@ -48,20 +48,37 @@ final class NotificationService {
         }
     }
 
-    func scheduleCompletionNotification(for title: String, identifier: String) async {
+    func scheduleCompletionNotification(
+        for title: String,
+        identifier: String,
+        timeInterval: TimeInterval
+    ) async {
         let content = UNMutableNotificationContent()
         content.title = "Routine Complete"
         content.body = "✅ \(title) done!"
         content.sound = .default
 
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let trigger = UNTimeIntervalNotificationTrigger(
+            timeInterval: max(timeInterval, 1),
+            repeats: false
+        )
         let request = UNNotificationRequest(
-            identifier: "\(identifier)-completion",
+            identifier: completionNotificationIdentifier(for: identifier),
             content: content,
             trigger: trigger
         )
 
         try? await add(request)
+    }
+
+    func removeCompletionNotification(for identifier: String) async {
+        center.removePendingNotificationRequests(
+            withIdentifiers: [completionNotificationIdentifier(for: identifier)]
+        )
+    }
+
+    func completionNotificationIdentifier(for identifier: String) -> String {
+        "routine-completion-\(identifier)"
     }
 
     func scheduleWaterReminder(intervalHours: Int) async {

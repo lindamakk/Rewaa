@@ -23,6 +23,7 @@ final class RoutineViewModel: ObservableObject {
             await notificationService.requestAuthorizationIfNeeded()
             loadRoutineItems()
             refreshCompletionCyclesIfNeeded()
+            restoreRunningTimers()
             await rescheduleAllNotifications()
         }
     }
@@ -77,6 +78,7 @@ final class RoutineViewModel: ObservableObject {
 
         let targetItem: RoutineItem
         if let item {
+            clearTimerState(for: item)
             item.title = trimmedTitle
             item.category = category
             item.scheduledTime = scheduledTime
@@ -135,11 +137,18 @@ final class RoutineViewModel: ObservableObject {
 
     func resetTodayCompletions() {
         for item in todayRoutineItems() where item.isCompleted {
+            clearTimerState(for: item)
             item.isCompleted = false
             item.lastCompletedAt = nil
         }
         persistChanges()
         loadRoutineItems()
+    }
+
+    func syncTimersWithCurrentTime() {
+        loadRoutineItems()
+        refreshCompletionCyclesIfNeeded()
+        restoreRunningTimers()
     }
 
     func refreshCompletionCyclesIfNeeded() {
@@ -165,35 +174,33 @@ final class RoutineViewModel: ObservableObject {
     }
 
     private func startTimer(for item: RoutineItem, durationInMinutes: Int) {
-        remainingSeconds[item.id] = durationInMinutes * 60
+        let durationInSeconds = durationInMinutes * 60
+        item.timerEndDate = Date().addingTimeInterval(TimeInterval(durationInSeconds))
+        persistChanges()
 
-        let timer = Timer
-            .publish(every: 1, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                self?.tick(for: item)
-            }
+        remainingSeconds[item.id] = durationInSeconds
+        scheduleLiveTimer(for: item)
 
-        activeTimers[item.id] = timer
+        Task {
+            await notificationService.scheduleCompletionNotification(
+                for: item.title,
+                identifier: item.notificationIdentifier,
+                timeInterval: TimeInterval(durationInSeconds)
+            )
+        }
     }
 
     private func tick(for item: RoutineItem) {
-        guard let seconds = remainingSeconds[item.id] else { return }
+        guard let endDate = item.timerEndDate else {
+            stopTimer(for: item)
+            return
+        }
 
-        if seconds <= 1 {
-            activeTimers[item.id]?.cancel()
-            activeTimers[item.id] = nil
-            remainingSeconds[item.id] = nil
-            complete(item)
-
-            Task {
-                await notificationService.scheduleCompletionNotification(
-                    for: item.title,
-                    identifier: item.notificationIdentifier
-                )
-            }
+        let seconds = max(Int(ceil(endDate.timeIntervalSinceNow)), 0)
+        if seconds == 0 {
+            complete(item, removePendingNotification: false)
         } else {
-            remainingSeconds[item.id] = seconds - 1
+            remainingSeconds[item.id] = seconds
         }
     }
 
@@ -201,14 +208,29 @@ final class RoutineViewModel: ObservableObject {
         activeTimers[item.id]?.cancel()
         activeTimers[item.id] = nil
         remainingSeconds[item.id] = nil
+        item.timerEndDate = nil
+        persistChanges()
+
+        Task {
+            await notificationService.removeCompletionNotification(for: item.notificationIdentifier)
+        }
     }
 
-    private func complete(_ item: RoutineItem) {
-        stopTimer(for: item)
+    private func complete(_ item: RoutineItem, removePendingNotification: Bool = true) {
+        activeTimers[item.id]?.cancel()
+        activeTimers[item.id] = nil
+        remainingSeconds[item.id] = nil
+        item.timerEndDate = nil
         item.isCompleted = true
         item.lastCompletedAt = .now
         persistChanges()
         loadRoutineItems()
+
+        guard removePendingNotification else { return }
+
+        Task {
+            await notificationService.removeCompletionNotification(for: item.notificationIdentifier)
+        }
     }
 
     private func isScheduledForToday(_ item: RoutineItem) -> Bool {
@@ -263,5 +285,42 @@ final class RoutineViewModel: ObservableObject {
 
     private func persistChanges() {
         try? modelContext.save()
+    }
+
+    private func restoreRunningTimers() {
+        for item in routineItems {
+            guard let endDate = item.timerEndDate else { continue }
+
+            if endDate <= Date() {
+                complete(item, removePendingNotification: false)
+            } else {
+                remainingSeconds[item.id] = max(Int(ceil(endDate.timeIntervalSinceNow)), 1)
+                scheduleLiveTimer(for: item)
+            }
+        }
+    }
+
+    private func scheduleLiveTimer(for item: RoutineItem) {
+        activeTimers[item.id]?.cancel()
+
+        let timer = Timer
+            .publish(every: 1, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.tick(for: item)
+            }
+
+        activeTimers[item.id] = timer
+    }
+
+    private func clearTimerState(for item: RoutineItem) {
+        activeTimers[item.id]?.cancel()
+        activeTimers[item.id] = nil
+        remainingSeconds[item.id] = nil
+        item.timerEndDate = nil
+
+        Task {
+            await notificationService.removeCompletionNotification(for: item.notificationIdentifier)
+        }
     }
 }

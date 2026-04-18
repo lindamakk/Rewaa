@@ -61,6 +61,7 @@ final class RoutineItem {
     var isCompleted: Bool
     var notificationIdentifier: String
     var lastCompletedAt: Date?
+    var timerEndDate: Date?
 
     init(
         id: UUID = UUID(),
@@ -72,7 +73,8 @@ final class RoutineItem {
         days: [Int] = [],
         isCompleted: Bool = false,
         notificationIdentifier: String? = nil,
-        lastCompletedAt: Date? = nil
+        lastCompletedAt: Date? = nil,
+        timerEndDate: Date? = nil
     ) {
         self.id = id
         self.title = title
@@ -84,5 +86,6 @@ final class RoutineItem {
         self.isCompleted = isCompleted
         self.notificationIdentifier = notificationIdentifier ?? id.uuidString
         self.lastCompletedAt = lastCompletedAt
+        self.timerEndDate = timerEndDate
     }
 }

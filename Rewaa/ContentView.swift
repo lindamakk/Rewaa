@@ -9,6 +9,8 @@ import SwiftUI
 
 struct ContentView: View {
     @AppStorage("preferredAppearance") private var preferredAppearance = AppearanceOption.system.rawValue
+    @Environment(\.scenePhase) private var scenePhase
+    @EnvironmentObject private var routineViewModel: RoutineViewModel
 
     var body: some View {
         TabView {
@@ -34,6 +36,10 @@ struct ContentView: View {
         }
         .tint(Theme.rose)
         .preferredColorScheme(colorScheme)
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            routineViewModel.syncTimersWithCurrentTime()
+        }
     }
 
     private var colorScheme: ColorScheme? {
