@@ -1,13 +1,20 @@
 import Foundation
 import UserNotifications
 
-final class NotificationService {
+extension Notification.Name {
+    static let openRoutineGroup = Notification.Name("openRoutineGroup")
+}
+
+final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
     static let shared = NotificationService()
 
     private let center = UNUserNotificationCenter.current()
     private let isUITesting = ProcessInfo.processInfo.arguments.contains("UI_TESTING")
 
-    private init() {}
+    private override init() {
+        super.init()
+        center.delegate = self
+    }
 
     func requestAuthorizationIfNeeded() async {
         guard !isUITesting else { return }
@@ -34,18 +41,23 @@ final class NotificationService {
         center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
-    func scheduleRoutineNotifications(for item: RoutineItem) async {
-        await removeRoutineNotifications(for: item.notificationIdentifier)
+    func scheduleRoutineNotification(for group: RoutineGroup) async {
+        await removeRoutineNotifications(for: group.notificationIdentifier)
 
         let content = UNMutableNotificationContent()
-        content.title = item.title
-        content.body = "Time for your \(item.category.title.lowercased()) routine."
+        content.title = group.name
+        content.body = "Time for your \(group.name)! 🌿"
         content.sound = .default
+        content.userInfo = ["routineGroupID": group.id.uuidString]
 
-        let requests = routineRequests(for: item, content: content)
+        let requests = routineRequests(for: group, content: content)
         for request in requests {
             try? await add(request)
         }
+    }
+
+    func cancelRoutineNotification(for group: RoutineGroup) async {
+        await removeRoutineNotifications(for: group.notificationIdentifier)
     }
 
     func scheduleCompletionNotification(
@@ -81,6 +93,21 @@ final class NotificationService {
         "routine-completion-\(identifier)"
     }
 
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        guard let groupID = response.notification.request.content.userInfo["routineGroupID"] as? String else {
+            return
+        }
+
+        NotificationCenter.default.post(
+            name: .openRoutineGroup,
+            object: nil,
+            userInfo: ["routineGroupID": groupID]
+        )
+    }
+
     func scheduleWaterReminder(intervalHours: Int) async {
         await removeWaterReminder()
 
@@ -110,14 +137,14 @@ final class NotificationService {
     }
 
     private func routineRequests(
-        for item: RoutineItem,
+        for group: RoutineGroup,
         content: UNMutableNotificationContent
     ) -> [UNNotificationRequest] {
         let calendar = Calendar.current
-        let timeComponents = calendar.dateComponents([.hour, .minute], from: item.scheduledTime)
-        let baseIdentifier = "routine-\(item.notificationIdentifier)"
+        let timeComponents = calendar.dateComponents([.hour, .minute], from: group.scheduledTime)
+        let baseIdentifier = "routine-\(group.notificationIdentifier)"
 
-        switch item.frequency {
+        switch group.frequency {
         case .daily:
             let components = DateComponents(
                 hour: timeComponents.hour,
@@ -127,9 +154,9 @@ final class NotificationService {
             return [UNNotificationRequest(identifier: baseIdentifier, content: content, trigger: trigger)]
 
         case .weekly:
-            let weekdays = item.days.isEmpty
-                ? [calendar.component(.weekday, from: item.scheduledTime)]
-                : item.days
+            let weekdays = group.days.isEmpty
+                ? [calendar.component(.weekday, from: group.scheduledTime)]
+                : group.days
 
             return weekdays.map { weekday in
                 let components = DateComponents(
@@ -146,13 +173,13 @@ final class NotificationService {
             }
 
         case .biweekly:
-            let weekdays = item.days.isEmpty
-                ? [calendar.component(.weekday, from: item.scheduledTime)]
-                : item.days
+            let weekdays = group.days.isEmpty
+                ? [calendar.component(.weekday, from: group.scheduledTime)]
+                : group.days
 
             let dates = weekdays.flatMap { weekday in
                 upcomingBiweeklyDates(
-                    from: item.scheduledTime,
+                    from: group.scheduledTime,
                     weekday: weekday,
                     occurrences: 12
                 )
@@ -172,7 +199,7 @@ final class NotificationService {
             }
 
         case .monthly:
-            let day = calendar.component(.day, from: item.scheduledTime)
+            let day = calendar.component(.day, from: group.scheduledTime)
             let components = DateComponents(
                 day: day,
                 hour: timeComponents.hour,

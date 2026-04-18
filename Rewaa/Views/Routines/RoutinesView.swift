@@ -4,15 +4,15 @@ struct RoutinesView: View {
     @EnvironmentObject private var routineViewModel: RoutineViewModel
 
     @State private var selectedFilter: RoutineCategory?
-    @State private var editingItem: RoutineItem?
-    @State private var isPresentingAddRoutine = false
+    @State private var editingGroup: RoutineGroup?
+    @State private var isPresentingAddGroup = false
 
     var body: some View {
         NavigationStack {
             List {
                 filterSection
 
-                if routineViewModel.groupedItems(for: selectedFilter).isEmpty {
+                if routineViewModel.groupedRoutines(for: selectedFilter).isEmpty {
                     Section {
                         VStack(spacing: 10) {
                             Image(systemName: "list.bullet.clipboard")
@@ -32,20 +32,16 @@ struct RoutinesView: View {
                     }
                     .listRowBackground(Color.clear)
                 } else {
-                    ForEach(routineViewModel.groupedItems(for: selectedFilter), id: \.0) { frequency, items in
+                    ForEach(routineViewModel.groupedRoutines(for: selectedFilter), id: \.0) { frequency, groups in
                         Section(frequency.title) {
-                            ForEach(items) { item in
-                                RoutineItemRow(item: item)
+                            ForEach(groups) { group in
+                                groupRow(group)
                                     .listRowInsets(EdgeInsets())
                                     .listRowSeparator(.hidden)
                                     .listRowBackground(Color.clear)
-                                    .contentShape(Rectangle()).padding(.vertical, 6)
-                                    .onTapGesture {
-                                        editingItem = item
-                                    }
                                     .swipeActions {
                                         Button(role: .destructive) {
-                                            routineViewModel.delete(item)
+                                            routineViewModel.delete(group)
                                         } label: {
                                             Label("Delete", systemImage: "trash")
                                         }
@@ -62,18 +58,61 @@ struct RoutinesView: View {
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        isPresentingAddRoutine = true
+                        isPresentingAddGroup = true
                     } label: {
                         Image(systemName: "plus")
                     }
                 }
             }
-            .sheet(item: $editingItem) { item in
-                AddEditRoutineView(editingItem: item)
+            .sheet(item: $editingGroup) { group in
+                AddEditGroupView(editingGroup: group)
             }
-            .sheet(isPresented: $isPresentingAddRoutine) {
-                AddEditRoutineView()
+            .sheet(isPresented: $isPresentingAddGroup) {
+                AddEditGroupView()
             }
+        }
+    }
+
+    private func groupRow(_ group: RoutineGroup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.name)
+                        .font(.headline)
+                    Text(group.scheduledTime.formatted(date: .omitted, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if routineViewModel.allItemsCompleted(in: group) {
+                    Text("Done")
+                        .font(.caption.bold())
+                        .foregroundStyle(Theme.sage)
+                }
+
+                Image(systemName: routineViewModel.isExpanded(group) ? "chevron.up" : "chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if routineViewModel.isExpanded(group) {
+                ForEach(group.items.sorted(by: { $0.order < $1.order })) { item in
+                    RoutineItemRow(item: item)
+                }
+
+                Button("Edit Group") {
+                    editingGroup = group
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.rose)
+            }
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            routineViewModel.toggleGroupExpansion(group)
         }
     }
 

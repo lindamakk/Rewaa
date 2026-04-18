@@ -21,10 +21,6 @@ struct RoutineItemRow: View {
                         .strikethrough(item.isCompleted, color: .secondary)
 
                     Spacer()
-
-                    Text(item.scheduledTime.formatted(date: .omitted, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 HStack(spacing: 8) {

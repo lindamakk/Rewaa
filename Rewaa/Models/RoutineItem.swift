@@ -54,38 +54,32 @@ final class RoutineItem {
     @Attribute(.unique) var id: UUID
     var title: String
     var category: RoutineCategory
-    var scheduledTime: Date
     var duration: Int?
-    var frequency: RoutineFrequency
-    var days: [Int]
     var isCompleted: Bool
-    var notificationIdentifier: String
+    var order: Int
     var lastCompletedAt: Date?
     var timerEndDate: Date?
+    var group: RoutineGroup?
 
     init(
         id: UUID = UUID(),
         title: String,
         category: RoutineCategory,
-        scheduledTime: Date,
         duration: Int? = nil,
-        frequency: RoutineFrequency,
-        days: [Int] = [],
         isCompleted: Bool = false,
-        notificationIdentifier: String? = nil,
+        order: Int = 0,
         lastCompletedAt: Date? = nil,
-        timerEndDate: Date? = nil
+        timerEndDate: Date? = nil,
+        group: RoutineGroup? = nil
     ) {
         self.id = id
         self.title = title
         self.category = category
-        self.scheduledTime = scheduledTime
         self.duration = duration
-        self.frequency = frequency
-        self.days = days
         self.isCompleted = isCompleted
-        self.notificationIdentifier = notificationIdentifier ?? id.uuidString
+        self.order = order
         self.lastCompletedAt = lastCompletedAt
         self.timerEndDate = timerEndDate
+        self.group = group
     }
 }

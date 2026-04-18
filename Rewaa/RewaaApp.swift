@@ -16,6 +16,7 @@ struct RewaaApp: App {
 
     init() {
         let schema = Schema([
+            RoutineGroup.self,
             RoutineItem.self,
             WaterLog.self
         ])

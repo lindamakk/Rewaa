@@ -4,7 +4,7 @@ struct HomeView: View {
     @EnvironmentObject private var routineViewModel: RoutineViewModel
     @EnvironmentObject private var waterViewModel: WaterViewModel
 
-    @State private var isPresentingAddRoutine = false
+    @State private var isPresentingAddGroup = false
     @State private var isPresentingCustomWaterSheet = false
     @State private var customAmount = ""
 
@@ -22,7 +22,7 @@ struct HomeView: View {
                 .background(Theme.cream.opacity(0.35))
 
                 Button {
-                    isPresentingAddRoutine = true
+                    isPresentingAddGroup = true
                 } label: {
                     Image(systemName: "plus")
                         .font(.title2.bold())
@@ -35,8 +35,8 @@ struct HomeView: View {
                 .padding()
             }
             .navigationTitle("Home")
-            .sheet(isPresented: $isPresentingAddRoutine) {
-                AddEditRoutineView()
+            .sheet(isPresented: $isPresentingAddGroup) {
+                AddEditGroupView()
             }
             .sheet(isPresented: $isPresentingCustomWaterSheet) {
                 NavigationStack {
@@ -102,18 +102,52 @@ struct HomeView: View {
             Text("Today's Routine")
                 .font(.title3.bold())
 
-            if routineViewModel.todayRoutineItems().isEmpty {
+            if routineViewModel.todayRoutineGroups().isEmpty {
                 emptyState(
                     symbol: "sparkles",
                     title: "No routines for today",
                     message: "Add a routine to build your beauty flow."
                 )
             } else {
-                ForEach(routineViewModel.todayRoutineItems()) { item in
-                    RoutineItemRow(item: item)
+                ForEach(routineViewModel.todayRoutineGroups()) { group in
+                    groupCard(group)
                 }
             }
         }
+    }
+
+    private func groupCard(_ group: RoutineGroup) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.name)
+                        .font(.headline)
+                    Text(group.scheduledTime.formatted(date: .omitted, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if routineViewModel.allItemsCompleted(in: group) {
+                    Text("Done")
+                        .font(.caption.bold())
+                        .foregroundStyle(Theme.sage)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Theme.cream)
+                        .clipShape(Capsule())
+                }
+            }
+
+            ForEach(group.items.sorted(by: { $0.order < $1.order })) { item in
+                RoutineItemRow(item: item)
+            }
+        }
+        .padding(18)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
+        .shadow(color: Theme.shadow, radius: 8, y: 4)
     }
 
     private var waterCardSection: some View {

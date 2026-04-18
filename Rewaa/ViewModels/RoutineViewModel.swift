@@ -4,8 +4,10 @@ import SwiftData
 
 @MainActor
 final class RoutineViewModel: ObservableObject {
-    @Published private(set) var routineItems: [RoutineItem] = []
+    @Published private(set) var routineGroups: [RoutineGroup] = []
     @Published private(set) var remainingSeconds: [UUID: Int] = [:]
+    @Published var expandedGroupIDs: Set<UUID> = []
+    @Published var focusedGroupID: UUID?
 
     private(set) var activeTimers: [UUID: AnyCancellable] = [:]
     private let modelContext: ModelContext
@@ -21,35 +23,46 @@ final class RoutineViewModel: ObservableObject {
 
         Task {
             await notificationService.requestAuthorizationIfNeeded()
-            loadRoutineItems()
+            loadRoutineGroups()
             refreshCompletionCyclesIfNeeded()
             restoreRunningTimers()
             await rescheduleAllNotifications()
         }
     }
 
-    func loadRoutineItems() {
-        let descriptor = FetchDescriptor<RoutineItem>(
-            sortBy: [SortDescriptor(\.scheduledTime), SortDescriptor(\.title)]
+    func loadRoutineGroups() {
+        let descriptor = FetchDescriptor<RoutineGroup>(
+            sortBy: [SortDescriptor(\.scheduledTime), SortDescriptor(\.name)]
         )
-        routineItems = (try? modelContext.fetch(descriptor)) ?? []
+        routineGroups = ((try? modelContext.fetch(descriptor)) ?? []).map { group in
+            group.items.sort { lhs, rhs in
+                if lhs.order == rhs.order {
+                    return lhs.title < rhs.title
+                }
+                return lhs.order < rhs.order
+            }
+            return group
+        }
     }
 
-    func todayRoutineItems() -> [RoutineItem] {
-        routineItems
+    func todayRoutineGroups() -> [RoutineGroup] {
+        routineGroups
             .filter(isScheduledForToday)
             .sorted { $0.scheduledTime < $1.scheduledTime }
     }
 
-    func groupedItems(for category: RoutineCategory?) -> [(RoutineFrequency, [RoutineItem])] {
+    func groupedRoutines(for category: RoutineCategory?) -> [(RoutineFrequency, [RoutineGroup])] {
         RoutineFrequency.allCases.compactMap { frequency in
-            let items = routineItems
+            let groups = routineGroups
                 .filter { $0.frequency == frequency }
-                .filter { category == nil || $0.category == category }
-                .sorted { $0.scheduledTime < $1.scheduledTime }
+                .filter { group in
+                    guard let category else { return true }
+                    return group.items.contains { $0.category == category }
+                }
+                .sorted { $0.name < $1.name }
 
-            guard !items.isEmpty else { return nil }
-            return (frequency, items)
+            guard !groups.isEmpty else { return nil }
+            return (frequency, groups)
         }
     }
 
@@ -64,59 +77,105 @@ final class RoutineViewModel: ObservableObject {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    func saveRoutine(
-        editing item: RoutineItem?,
-        title: String,
-        category: RoutineCategory,
+    func saveGroup(
+        editing group: RoutineGroup?,
+        name: String,
         scheduledTime: Date,
-        duration: Int?,
         frequency: RoutineFrequency,
-        days: [Int]
+        days: [Int],
+        items: [EditableRoutineItem]
     ) {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalizedDays = Array(Set(days)).sorted()
-
-        let targetItem: RoutineItem
-        if let item {
-            clearTimerState(for: item)
-            item.title = trimmedTitle
-            item.category = category
-            item.scheduledTime = scheduledTime
-            item.duration = duration
-            item.frequency = frequency
-            item.days = normalizedDays
-            item.notificationIdentifier = item.id.uuidString
-            item.isCompleted = isCompletedInCurrentCycle(item)
-            targetItem = item
-        } else {
-            let newItem = RoutineItem(
-                title: trimmedTitle,
-                category: category,
-                scheduledTime: scheduledTime,
-                duration: duration,
-                frequency: frequency,
-                days: normalizedDays
+        let normalizedItems = items.enumerated().map { index, item in
+            EditableRoutineItem(
+                id: item.id,
+                title: item.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                category: item.category,
+                duration: item.duration,
+                order: index
             )
-            modelContext.insert(newItem)
-            targetItem = newItem
+        }
+
+        let targetGroup: RoutineGroup
+        if let group {
+            for existingItem in group.items where !normalizedItems.contains(where: { $0.id == existingItem.id }) {
+                clearTimerState(for: existingItem)
+                modelContext.delete(existingItem)
+            }
+
+            group.name = trimmedName
+            group.scheduledTime = scheduledTime
+            group.frequency = frequency
+            group.days = normalizedDays
+
+            for itemData in normalizedItems {
+                if let existingItem = group.items.first(where: { $0.id == itemData.id }) {
+                    clearTimerState(for: existingItem)
+                    existingItem.title = itemData.title
+                    existingItem.category = itemData.category
+                    existingItem.duration = itemData.duration
+                    existingItem.order = itemData.order
+                    existingItem.isCompleted = isCompletedInCurrentCycle(existingItem, for: group)
+                } else {
+                    let newItem = RoutineItem(
+                        id: itemData.id,
+                        title: itemData.title,
+                        category: itemData.category,
+                        duration: itemData.duration,
+                        order: itemData.order,
+                        group: group
+                    )
+                    group.items.append(newItem)
+                    modelContext.insert(newItem)
+                }
+            }
+
+            targetGroup = group
+        } else {
+            let newItems = normalizedItems.map { itemData in
+                RoutineItem(
+                    id: itemData.id,
+                    title: itemData.title,
+                    category: itemData.category,
+                    duration: itemData.duration,
+                    order: itemData.order
+                )
+            }
+
+            let newGroup = RoutineGroup(
+                name: trimmedName,
+                scheduledTime: scheduledTime,
+                frequency: frequency,
+                days: normalizedDays,
+                items: newItems
+            )
+            newItems.forEach { $0.group = newGroup }
+            modelContext.insert(newGroup)
+            targetGroup = newGroup
         }
 
         persistChanges()
-        loadRoutineItems()
+        loadRoutineGroups()
+        expandedGroupIDs.insert(targetGroup.id)
 
         Task {
-            await notificationService.scheduleRoutineNotifications(for: targetItem)
+            await notificationService.scheduleRoutineNotification(for: targetGroup)
         }
     }
 
-    func delete(_ item: RoutineItem) {
-        stopTimer(for: item)
-        modelContext.delete(item)
+    func delete(_ group: RoutineGroup) {
+        for item in group.items {
+            clearTimerState(for: item)
+        }
+
+        modelContext.delete(group)
         persistChanges()
-        loadRoutineItems()
+        loadRoutineGroups()
+        expandedGroupIDs.remove(group.id)
 
         Task {
-            await notificationService.removeRoutineNotifications(for: item.notificationIdentifier)
+            await cancelNotification(for: group)
         }
     }
 
@@ -136,17 +195,19 @@ final class RoutineViewModel: ObservableObject {
     }
 
     func resetTodayCompletions() {
-        for item in todayRoutineItems() where item.isCompleted {
-            clearTimerState(for: item)
-            item.isCompleted = false
-            item.lastCompletedAt = nil
+        for group in todayRoutineGroups() {
+            for item in group.items where item.isCompleted {
+                clearTimerState(for: item)
+                item.isCompleted = false
+                item.lastCompletedAt = nil
+            }
         }
         persistChanges()
-        loadRoutineItems()
+        loadRoutineGroups()
     }
 
     func syncTimersWithCurrentTime() {
-        loadRoutineItems()
+        loadRoutineGroups()
         refreshCompletionCyclesIfNeeded()
         restoreRunningTimers()
     }
@@ -154,23 +215,54 @@ final class RoutineViewModel: ObservableObject {
     func refreshCompletionCyclesIfNeeded() {
         var needsSave = false
 
-        for item in routineItems where item.isCompleted && !isCompletedInCurrentCycle(item) {
-            item.isCompleted = false
-            item.lastCompletedAt = nil
-            needsSave = true
+        for group in routineGroups {
+            for item in group.items where item.isCompleted && !isCompletedInCurrentCycle(item, for: group) {
+                item.isCompleted = false
+                item.lastCompletedAt = nil
+                needsSave = true
+            }
         }
 
         if needsSave {
             persistChanges()
-            loadRoutineItems()
+            loadRoutineGroups()
         }
     }
 
     func rescheduleAllNotifications() async {
         await notificationService.removeRoutineNotifications()
-        for item in routineItems {
-            await notificationService.scheduleRoutineNotifications(for: item)
+        for group in routineGroups {
+            await scheduleNotification(for: group)
         }
+    }
+
+    func scheduleNotification(for group: RoutineGroup) async {
+        await notificationService.scheduleRoutineNotification(for: group)
+    }
+
+    func cancelNotification(for group: RoutineGroup) async {
+        await notificationService.cancelRoutineNotification(for: group)
+    }
+
+    func toggleGroupExpansion(_ group: RoutineGroup) {
+        if expandedGroupIDs.contains(group.id) {
+            expandedGroupIDs.remove(group.id)
+        } else {
+            expandedGroupIDs.insert(group.id)
+        }
+    }
+
+    func isExpanded(_ group: RoutineGroup) -> Bool {
+        expandedGroupIDs.contains(group.id)
+    }
+
+    func allItemsCompleted(in group: RoutineGroup) -> Bool {
+        !group.items.isEmpty && group.items.allSatisfy(\.isCompleted)
+    }
+
+    func focusGroup(with id: UUID) {
+        focusedGroupID = id
+        expandedGroupIDs.insert(id)
     }
 
     private func startTimer(for item: RoutineItem, durationInMinutes: Int) {
@@ -184,7 +276,7 @@ final class RoutineViewModel: ObservableObject {
         Task {
             await notificationService.scheduleCompletionNotification(
                 for: item.title,
-                identifier: item.notificationIdentifier,
+                identifier: item.id.uuidString,
                 timeInterval: TimeInterval(durationInSeconds)
             )
         }
@@ -212,7 +304,7 @@ final class RoutineViewModel: ObservableObject {
         persistChanges()
 
         Task {
-            await notificationService.removeCompletionNotification(for: item.notificationIdentifier)
+            await notificationService.removeCompletionNotification(for: item.id.uuidString)
         }
     }
 
@@ -224,46 +316,46 @@ final class RoutineViewModel: ObservableObject {
         item.isCompleted = true
         item.lastCompletedAt = .now
         persistChanges()
-        loadRoutineItems()
+        loadRoutineGroups()
 
         guard removePendingNotification else { return }
 
         Task {
-            await notificationService.removeCompletionNotification(for: item.notificationIdentifier)
+            await notificationService.removeCompletionNotification(for: item.id.uuidString)
         }
     }
 
-    private func isScheduledForToday(_ item: RoutineItem) -> Bool {
-        switch item.frequency {
+    private func isScheduledForToday(_ group: RoutineGroup) -> Bool {
+        switch group.frequency {
         case .daily:
             return true
 
         case .weekly:
             let weekday = calendar.component(.weekday, from: .now)
-            let validDays = item.days.isEmpty ? [calendar.component(.weekday, from: item.scheduledTime)] : item.days
+            let validDays = group.days.isEmpty ? [calendar.component(.weekday, from: group.scheduledTime)] : group.days
             return validDays.contains(weekday)
 
         case .biweekly:
             let weekday = calendar.component(.weekday, from: .now)
-            let validDays = item.days.isEmpty ? [calendar.component(.weekday, from: item.scheduledTime)] : item.days
+            let validDays = group.days.isEmpty ? [calendar.component(.weekday, from: group.scheduledTime)] : group.days
             guard validDays.contains(weekday) else { return false }
 
-            let startOfReferenceWeek = calendar.dateInterval(of: .weekOfYear, for: item.scheduledTime)?.start ?? item.scheduledTime
+            let startOfReferenceWeek = calendar.dateInterval(of: .weekOfYear, for: group.scheduledTime)?.start ?? group.scheduledTime
             let startOfTodayWeek = calendar.dateInterval(of: .weekOfYear, for: .now)?.start ?? .now
             let weeks = calendar.dateComponents([.weekOfYear], from: startOfReferenceWeek, to: startOfTodayWeek).weekOfYear ?? 0
             return weeks >= 0 && weeks % 2 == 0
 
         case .monthly:
             let currentDay = calendar.component(.day, from: .now)
-            let scheduledDay = calendar.component(.day, from: item.scheduledTime)
+            let scheduledDay = calendar.component(.day, from: group.scheduledTime)
             return currentDay == scheduledDay
         }
     }
 
-    private func isCompletedInCurrentCycle(_ item: RoutineItem) -> Bool {
+    private func isCompletedInCurrentCycle(_ item: RoutineItem, for group: RoutineGroup) -> Bool {
         guard item.isCompleted, let lastCompletedAt = item.lastCompletedAt else { return false }
 
-        switch item.frequency {
+        switch group.frequency {
         case .daily:
             return calendar.isDate(lastCompletedAt, inSameDayAs: .now)
 
@@ -271,7 +363,7 @@ final class RoutineViewModel: ObservableObject {
             return calendar.isDate(lastCompletedAt, equalTo: .now, toGranularity: .weekOfYear)
 
         case .biweekly:
-            let startOfReferenceWeek = calendar.dateInterval(of: .weekOfYear, for: item.scheduledTime)?.start ?? item.scheduledTime
+            let startOfReferenceWeek = calendar.dateInterval(of: .weekOfYear, for: group.scheduledTime)?.start ?? group.scheduledTime
             let completedWeek = calendar.dateInterval(of: .weekOfYear, for: lastCompletedAt)?.start ?? lastCompletedAt
             let currentWeek = calendar.dateInterval(of: .weekOfYear, for: .now)?.start ?? .now
             let completedOffset = calendar.dateComponents([.weekOfYear], from: startOfReferenceWeek, to: completedWeek).weekOfYear ?? -1
@@ -288,7 +380,8 @@ final class RoutineViewModel: ObservableObject {
     }
 
     private func restoreRunningTimers() {
-        for item in routineItems {
+        for group in routineGroups {
+            for item in group.items {
             guard let endDate = item.timerEndDate else { continue }
 
             if endDate <= Date() {
@@ -296,6 +389,7 @@ final class RoutineViewModel: ObservableObject {
             } else {
                 remainingSeconds[item.id] = max(Int(ceil(endDate.timeIntervalSinceNow)), 1)
                 scheduleLiveTimer(for: item)
+            }
             }
         }
     }
@@ -320,7 +414,29 @@ final class RoutineViewModel: ObservableObject {
         item.timerEndDate = nil
 
         Task {
-            await notificationService.removeCompletionNotification(for: item.notificationIdentifier)
+            await notificationService.removeCompletionNotification(for: item.id.uuidString)
         }
+    }
+}
+
+struct EditableRoutineItem: Identifiable, Equatable {
+    let id: UUID
+    var title: String
+    var category: RoutineCategory
+    var duration: Int?
+    var order: Int
+
+    init(
+        id: UUID = UUID(),
+        title: String = "",
+        category: RoutineCategory = .skin,
+        duration: Int? = nil,
+        order: Int = 0
+    ) {
+        self.id = id
+        self.title = title
+        self.category = category
+        self.duration = duration
+        self.order = order
     }
 }
